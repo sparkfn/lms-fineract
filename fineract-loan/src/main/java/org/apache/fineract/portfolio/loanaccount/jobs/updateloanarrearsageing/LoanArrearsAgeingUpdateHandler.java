@@ -134,6 +134,7 @@ public class LoanArrearsAgeingUpdateHandler {
         insertSqlStatementBuilder.append(" INNER JOIN m_loan_repayment_schedule mr on mr.loan_id = ml.id ");
         insertSqlStatementBuilder.append(" left join m_product_loan_recalculation_details prd on prd.product_id = ml.product_id ");
         insertSqlStatementBuilder.append(" WHERE ml.loan_status_id = 300 ");// active
+        insertSqlStatementBuilder.append(" and ml.is_charged_off = false ");
         if (!isForAllLoans) {
             insertSqlStatementBuilder.append(" and ml.id IN (?)");
         }
@@ -187,6 +188,7 @@ public class LoanArrearsAgeingUpdateHandler {
         loanIdentifier.append(
                 "inner join m_product_loan_recalculation_details prd on prd.product_id = ml.product_id and prd.arrears_based_on_original_schedule = true  ");
         loanIdentifier.append("WHERE ml.loan_status_id = 300 ");
+        loanIdentifier.append(" and ml.is_charged_off = false ");
         if (!isForAllLoans) {
             loanIdentifier.append(" and ml.id IN (?)");
         }
