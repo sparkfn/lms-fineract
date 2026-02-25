@@ -13,7 +13,7 @@ RUN dos2unix gradlew && chmod +x gradlew && \
     rm -f .git && git init && \
     git config user.email "build@docker" && git config user.name "build" && \
     git add . && git commit -m "build" && \
-    ./gradlew bootJar -x test -x cucumber
+    ./gradlew bootJar -x test -x cucumber --no-daemon -Dorg.gradle.jvmargs="-Xmx2g"
 
 ###############
 ### STAGE 2: Run

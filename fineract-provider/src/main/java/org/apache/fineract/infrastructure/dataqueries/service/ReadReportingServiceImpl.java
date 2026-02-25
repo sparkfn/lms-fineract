@@ -163,7 +163,10 @@ public class ReadReportingServiceImpl implements ReadReportingService {
         final String inputSqlWrapped = this.genericDataService.wrapSQL(inputSql);
 
         // the return statement contains the exact sql required
-        final SqlRowSet rs = this.jdbcTemplate.queryForRowSet(inputSqlWrapped, encodedName);
+        // Use raw name (not ESAPI-encoded) for prepared statement parameter.
+        // JDBC parameterized queries already prevent SQL injection; ESAPI encoding
+        // escapes hyphens/special chars (e.g. '-' → '\-') which causes mismatches.
+        final SqlRowSet rs = this.jdbcTemplate.queryForRowSet(inputSqlWrapped, name);
 
         if (rs.next() && rs.getString("the_sql") != null) {
             return rs.getString("the_sql");
