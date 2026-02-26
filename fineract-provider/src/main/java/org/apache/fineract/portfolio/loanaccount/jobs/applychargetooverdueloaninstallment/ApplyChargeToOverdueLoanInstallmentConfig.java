@@ -66,6 +66,9 @@ public class ApplyChargeToOverdueLoanInstallmentConfig {
     @Value("${FINERACT_AUTO_CHARGEOFF_OVERDUE_DAYS:180}")
     private long autoChargeOffOverdueDays;
 
+    @Value("${FINERACT_LINEAR_PENALTY_ENABLED:false}")
+    private boolean linearPenaltyEnabled;
+
     @Bean
     protected Step applyChargeToOverdueLoanInstallmentStep() {
         return new StepBuilder(JobName.APPLY_CHARGE_TO_OVERDUE_LOAN_INSTALLMENT.name(), jobRepository)
@@ -82,6 +85,6 @@ public class ApplyChargeToOverdueLoanInstallmentConfig {
     public ApplyChargeToOverdueLoanInstallmentTasklet applyChargeToOverdueLoanInstallmentTasklet() {
         return new ApplyChargeToOverdueLoanInstallmentTasklet(configurationDomainService, loanReadPlatformService,
                 loanChargeWritePlatformService, loanWritePlatformService, codeValueReadPlatformService, fromJsonHelper,
-                autoChargeOffEnabled, autoChargeOffOverdueDays, transactionManager, jdbcTemplate);
+                autoChargeOffEnabled, autoChargeOffOverdueDays, linearPenaltyEnabled, transactionManager, jdbcTemplate);
     }
 }

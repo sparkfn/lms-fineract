@@ -17,7 +17,12 @@ RUN dos2unix gradlew && chmod +x gradlew && \
     git add . && git commit -m "build" && \
     git tag ${FINERACT_VERSION} && \
     git branch -m release/${FINERACT_VERSION} && \
-    ./gradlew bootJar -x test -x cucumber --no-daemon -Dorg.gradle.jvmargs="-Xmx2g"
+    for attempt in 1 2 3 4 5; do \
+      echo "=== Gradle build attempt $attempt ===" && \
+      ./gradlew bootJar -x test -x cucumber --no-daemon -Dorg.gradle.jvmargs="-Xmx2g" && break || \
+      echo "=== Attempt $attempt failed, retrying in 15s ===" && sleep 15; \
+    done && \
+    test -f fineract-provider/build/libs/fineract-provider-*.jar
 
 ###############
 ### STAGE 2: Run

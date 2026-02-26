@@ -69,7 +69,7 @@ public class ApplyChargeToOverdueLoanInstallmentTaskletTest {
 
         tasklet = new ApplyChargeToOverdueLoanInstallmentTasklet(configurationDomainService, loanReadPlatformService,
                 loanChargeWritePlatformService, loanWritePlatformService, codeValueReadPlatformService, fromJsonHelper, true, 180L,
-                transactionManager, jdbcTemplate);
+                true, transactionManager, jdbcTemplate);
     }
 
     @Test

@@ -67,6 +67,7 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
     private final FromJsonHelper fromJsonHelper;
     private final boolean autoChargeOffEnabled;
     private final long autoChargeOffOverdueDays;
+    private final boolean linearPenaltyEnabled;
     private final PlatformTransactionManager transactionManager;
     private final JdbcTemplate jdbcTemplate;
 
@@ -133,8 +134,10 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
                     }
 
                     // Apply penalty charges in its own transaction
+                    final Collection<OverdueLoanScheduleData> installmentsToCharge = linearPenaltyEnabled
+                            ? findEarliestPerCharge(entry.getValue()) : entry.getValue();
                     txTemplate.executeWithoutResult(status -> {
-                        loanChargeWritePlatformService.applyOverdueChargesForLoan(entry.getKey(), entry.getValue());
+                        loanChargeWritePlatformService.applyOverdueChargesForLoan(entry.getKey(), installmentsToCharge);
                     });
                 } catch (final PlatformApiDataValidationException e) {
                     final List<ApiParameterError> errors = e.getErrors();
@@ -180,6 +183,25 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
         }
         long overdueDays = ChronoUnit.DAYS.between(earliestDueDate, businessDate);
         return overdueDays >= autoChargeOffOverdueDays;
+    }
+
+    private Collection<OverdueLoanScheduleData> findEarliestPerCharge(Collection<OverdueLoanScheduleData> installments) {
+        final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        final Map<Long, OverdueLoanScheduleData> earliestByCharge = new HashMap<>();
+        for (OverdueLoanScheduleData installment : installments) {
+            Long chargeId = installment.getChargeId();
+            OverdueLoanScheduleData current = earliestByCharge.get(chargeId);
+            if (current == null) {
+                earliestByCharge.put(chargeId, installment);
+            } else {
+                LocalDate currentDue = LocalDate.parse(current.getDueDate(), formatter);
+                LocalDate candidateDue = LocalDate.parse(installment.getDueDate(), formatter);
+                if (candidateDue.isBefore(currentDue)) {
+                    earliestByCharge.put(chargeId, installment);
+                }
+            }
+        }
+        return earliestByCharge.values();
     }
 
     private Long getChargeOffReasonId() {
