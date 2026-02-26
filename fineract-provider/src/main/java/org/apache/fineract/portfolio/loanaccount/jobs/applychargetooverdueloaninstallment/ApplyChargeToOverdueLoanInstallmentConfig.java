@@ -26,6 +26,7 @@ import org.apache.fineract.portfolio.loanaccount.service.LoanChargeWritePlatform
 import org.apache.fineract.portfolio.loanaccount.service.LoanReadPlatformService;
 import org.apache.fineract.portfolio.loanaccount.service.LoanWritePlatformService;
 import org.springframework.batch.core.Job;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.launch.support.RunIdIncrementer;
@@ -56,6 +57,11 @@ public class ApplyChargeToOverdueLoanInstallmentConfig {
     private CodeValueReadPlatformService codeValueReadPlatformService;
     @Autowired
     private FromJsonHelper fromJsonHelper;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Value("${FINERACT_AUTO_CHARGEOFF_ENABLED:false}")
+    private boolean autoChargeOffEnabled;
 
     @Value("${FINERACT_AUTO_CHARGEOFF_OVERDUE_DAYS:180}")
     private long autoChargeOffOverdueDays;
@@ -76,6 +82,6 @@ public class ApplyChargeToOverdueLoanInstallmentConfig {
     public ApplyChargeToOverdueLoanInstallmentTasklet applyChargeToOverdueLoanInstallmentTasklet() {
         return new ApplyChargeToOverdueLoanInstallmentTasklet(configurationDomainService, loanReadPlatformService,
                 loanChargeWritePlatformService, loanWritePlatformService, codeValueReadPlatformService, fromJsonHelper,
-                autoChargeOffOverdueDays, transactionManager);
+                autoChargeOffEnabled, autoChargeOffOverdueDays, transactionManager, jdbcTemplate);
     }
 }

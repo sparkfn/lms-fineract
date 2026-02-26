@@ -41,6 +41,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.StepContribution;
 import org.springframework.batch.core.scope.context.ChunkContext;
 import org.springframework.batch.repeat.RepeatStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 
 public class ApplyChargeToOverdueLoanInstallmentTaskletTest {
@@ -64,10 +65,11 @@ public class ApplyChargeToOverdueLoanInstallmentTaskletTest {
         FromJsonHelper fromJsonHelper = mock(FromJsonHelper.class);
 
         PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
 
         tasklet = new ApplyChargeToOverdueLoanInstallmentTasklet(configurationDomainService, loanReadPlatformService,
-                loanChargeWritePlatformService, loanWritePlatformService, codeValueReadPlatformService, fromJsonHelper, 180L,
-                transactionManager);
+                loanChargeWritePlatformService, loanWritePlatformService, codeValueReadPlatformService, fromJsonHelper, true, 180L,
+                transactionManager, jdbcTemplate);
     }
 
     @Test

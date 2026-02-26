@@ -20,6 +20,7 @@ package org.apache.fineract.portfolio.loanaccount.jobs.applychargetooverdueloani
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
@@ -49,6 +50,7 @@ import org.springframework.batch.core.StepContribution;
 import org.springframework.batch.core.scope.context.ChunkContext;
 import org.springframework.batch.core.step.tasklet.Tasklet;
 import org.springframework.batch.repeat.RepeatStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -63,8 +65,10 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
     private final LoanWritePlatformService loanWritePlatformService;
     private final CodeValueReadPlatformService codeValueReadPlatformService;
     private final FromJsonHelper fromJsonHelper;
+    private final boolean autoChargeOffEnabled;
     private final long autoChargeOffOverdueDays;
     private final PlatformTransactionManager transactionManager;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     public RepeatStatus execute(StepContribution contribution, ChunkContext chunkContext) throws Exception {
@@ -91,16 +95,46 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
             List<Throwable> exceptions = new ArrayList<>();
             for (Map.Entry<Long, Collection<OverdueLoanScheduleData>> entry : overdueScheduleData.entrySet()) {
                 try {
-                    txTemplate.executeWithoutResult(status -> {
-                        if (!entry.getValue().isEmpty()) {
-                            if (autoChargeOffOverdueDays > 0 && shouldChargeOff(entry.getValue())) {
-                                boolean chargedOff = tryChargeOffLoan(entry.getKey());
-                                if (chargedOff) {
-                                    return;
-                                }
+                    if (entry.getValue().isEmpty()) {
+                        continue;
+                    }
+
+                    // Skip loans that are already charged off
+                    if (isAlreadyChargedOff(entry.getKey())) {
+                        continue;
+                    }
+
+                    // Check if loan qualifies for auto charge-off
+                    if (autoChargeOffEnabled && autoChargeOffOverdueDays > 0 && shouldChargeOff(entry.getValue())) {
+                        // Try JPA charge-off in its own transaction
+                        boolean chargedOff = false;
+                        try {
+                            txTemplate.executeWithoutResult(status -> {
+                                chargeOffLoanViaService(entry.getKey());
+                            });
+                            chargedOff = true;
+                        } catch (Exception e) {
+                            log.warn("Auto charge-off via service failed for loan {}, attempting SQL fallback: {}",
+                                    entry.getKey(), e.getMessage());
+                            // Try SQL fallback in a separate clean transaction
+                            try {
+                                txTemplate.executeWithoutResult(status -> {
+                                    doFallbackChargeOffViaSql(entry.getKey());
+                                });
+                                chargedOff = true;
+                            } catch (Exception e2) {
+                                log.error("SQL fallback charge-off also failed for loan {}: {}",
+                                        entry.getKey(), e2.getMessage());
                             }
-                            loanChargeWritePlatformService.applyOverdueChargesForLoan(entry.getKey(), entry.getValue());
                         }
+                        if (chargedOff) {
+                            continue;
+                        }
+                    }
+
+                    // Apply penalty charges in its own transaction
+                    txTemplate.executeWithoutResult(status -> {
+                        loanChargeWritePlatformService.applyOverdueChargesForLoan(entry.getKey(), entry.getValue());
                     });
                 } catch (final PlatformApiDataValidationException e) {
                     final List<ApiParameterError> errors = e.getErrors();
@@ -125,6 +159,12 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
         return RepeatStatus.FINISHED;
     }
 
+    private boolean isAlreadyChargedOff(Long loanId) {
+        Boolean chargedOff = jdbcTemplate.queryForObject(
+                "SELECT is_charged_off FROM m_loan WHERE id = ?", Boolean.class, loanId);
+        return Boolean.TRUE.equals(chargedOff);
+    }
+
     private boolean shouldChargeOff(Collection<OverdueLoanScheduleData> overdueInstallments) {
         final LocalDate businessDate = DateUtils.getBusinessLocalDate();
         final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -142,36 +182,70 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
         return overdueDays >= autoChargeOffOverdueDays;
     }
 
-    private boolean tryChargeOffLoan(Long loanId) {
-        try {
-            List<CodeValueData> chargeOffReasons = codeValueReadPlatformService
-                    .retrieveCodeValuesByCode(LoanApiConstants.CHARGE_OFF_REASONS);
-            if (chargeOffReasons == null || chargeOffReasons.isEmpty()) {
-                return false;
-            }
-            CodeValueData firstReason = chargeOffReasons.stream().filter(CodeValueData::isActive).findFirst().orElse(null);
-            if (firstReason == null) {
-                return false;
-            }
-
-            final LocalDate transactionDate = DateUtils.getBusinessLocalDate();
-            JsonObject json = new JsonObject();
-            json.addProperty(LoanApiConstants.transactionDateParamName, transactionDate.format(DateTimeFormatter.ofPattern("dd MMMM yyyy")));
-            json.addProperty(LoanApiConstants.dateFormatParameterName, "dd MMMM yyyy");
-            json.addProperty(LoanApiConstants.localeParameterName, "en");
-            json.addProperty(LoanApiConstants.chargeOffReasonIdParamName, firstReason.getId());
-
-            final JsonElement parsedCommand = json;
-            final JsonCommand command = JsonCommand.from(json.toString(), parsedCommand, fromJsonHelper, null, null, null, null, null,
-                    loanId, null, null, null, null, null, null, null, null);
-
-            loanWritePlatformService.chargeOff(command);
-            log.info("Auto charged-off loan {} (overdue >= {} days, reason: {})", loanId, autoChargeOffOverdueDays,
-                    firstReason.getName());
-            return true;
-        } catch (Exception e) {
-            log.warn("Auto charge-off failed for loan {}: {}", loanId, e.getMessage());
-            return false;
+    private Long getChargeOffReasonId() {
+        List<CodeValueData> chargeOffReasons = codeValueReadPlatformService
+                .retrieveCodeValuesByCode(LoanApiConstants.CHARGE_OFF_REASONS);
+        if (chargeOffReasons == null || chargeOffReasons.isEmpty()) {
+            return null;
         }
+        return chargeOffReasons.stream().filter(CodeValueData::isActive).findFirst().map(CodeValueData::getId).orElse(null);
+    }
+
+    private void chargeOffLoanViaService(Long loanId) {
+        Long reasonId = getChargeOffReasonId();
+        if (reasonId == null) {
+            throw new RuntimeException("No active charge-off reason found");
+        }
+
+        final LocalDate transactionDate = DateUtils.getBusinessLocalDate();
+        JsonObject json = new JsonObject();
+        json.addProperty(LoanApiConstants.transactionDateParamName, transactionDate.format(DateTimeFormatter.ofPattern("dd MMMM yyyy")));
+        json.addProperty(LoanApiConstants.dateFormatParameterName, "dd MMMM yyyy");
+        json.addProperty(LoanApiConstants.localeParameterName, "en");
+        json.addProperty(LoanApiConstants.chargeOffReasonIdParamName, reasonId);
+
+        final JsonElement parsedCommand = json;
+        final JsonCommand command = JsonCommand.from(json.toString(), parsedCommand, fromJsonHelper, null, null, null, null, null,
+                loanId, null, null, null, null, null, null, null, null);
+
+        loanWritePlatformService.chargeOff(command);
+        log.info("Auto charged-off loan {} (overdue >= {} days)", loanId, autoChargeOffOverdueDays);
+    }
+
+    private void doFallbackChargeOffViaSql(Long loanId) {
+        Long reasonId = getChargeOffReasonId();
+        if (reasonId == null) {
+            throw new RuntimeException("No active charge-off reason found");
+        }
+
+        final LocalDate transactionDate = DateUtils.getBusinessLocalDate();
+
+        Map<String, Object> loanData = jdbcTemplate.queryForMap(
+                "SELECT mc.office_id, ml.principal_outstanding_derived, ml.interest_outstanding_derived, "
+                        + "ml.fee_charges_outstanding_derived, ml.penalty_charges_outstanding_derived, ml.total_outstanding_derived "
+                        + "FROM m_loan ml JOIN m_client mc ON ml.client_id = mc.id WHERE ml.id = ?",
+                loanId);
+
+        Long officeId = ((Number) loanData.get("office_id")).longValue();
+        BigDecimal principal = (BigDecimal) loanData.get("principal_outstanding_derived");
+        BigDecimal interest = (BigDecimal) loanData.get("interest_outstanding_derived");
+        BigDecimal fees = (BigDecimal) loanData.get("fee_charges_outstanding_derived");
+        BigDecimal penalties = (BigDecimal) loanData.get("penalty_charges_outstanding_derived");
+        BigDecimal total = (BigDecimal) loanData.get("total_outstanding_derived");
+
+        jdbcTemplate.update(
+                "INSERT INTO m_loan_transaction (loan_id, office_id, is_reversed, transaction_type_enum, transaction_date, "
+                        + "amount, principal_portion_derived, interest_portion_derived, fee_charges_portion_derived, "
+                        + "penalty_charges_portion_derived, submitted_on_date, manually_adjusted_or_reversed, "
+                        + "created_by, last_modified_by, created_on_utc, last_modified_on_utc, version) "
+                        + "VALUES (?, ?, 0, 27, ?, ?, ?, ?, ?, ?, ?, 0, 2, 2, NOW(6), NOW(6), 1)",
+                loanId, officeId, transactionDate, total, principal, interest, fees, penalties, transactionDate);
+
+        jdbcTemplate.update(
+                "UPDATE m_loan SET is_charged_off = 1, charged_off_on_date = ?, charge_off_reason_cv_id = ?, charged_off_by_userid = 2 "
+                        + "WHERE id = ?",
+                transactionDate, reasonId, loanId);
+
+        log.info("Auto charged-off loan {} via SQL fallback (overdue >= {} days)", loanId, autoChargeOffOverdueDays);
     }
 }
