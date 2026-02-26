@@ -40,6 +40,8 @@ import org.apache.fineract.infrastructure.core.exception.AbstractPlatformDomainR
 import org.apache.fineract.infrastructure.core.exception.PlatformApiDataValidationException;
 import org.apache.fineract.infrastructure.core.serialization.FromJsonHelper;
 import org.apache.fineract.infrastructure.core.service.DateUtils;
+import org.apache.fineract.infrastructure.jobs.domain.JobParameter;
+import org.apache.fineract.infrastructure.jobs.domain.JobParameterRepository;
 import org.apache.fineract.infrastructure.jobs.exception.JobExecutionException;
 import org.apache.fineract.portfolio.loanaccount.api.LoanApiConstants;
 import org.apache.fineract.portfolio.loanaccount.loanschedule.data.OverdueLoanScheduleData;
@@ -59,19 +61,34 @@ import org.springframework.transaction.support.TransactionTemplate;
 @RequiredArgsConstructor
 public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
 
+    private static final long PENALTY_JOB_ID = 12L;
+
     private final ConfigurationDomainService configurationDomainService;
     private final LoanReadPlatformService loanReadPlatformService;
     private final LoanChargeWritePlatformService loanChargeWritePlatformService;
     private final LoanWritePlatformService loanWritePlatformService;
     private final CodeValueReadPlatformService codeValueReadPlatformService;
     private final FromJsonHelper fromJsonHelper;
-    private final boolean autoChargeOffEnabled;
-    private final long autoChargeOffOverdueDays;
+    private final JobParameterRepository jobParameterRepository;
     private final PlatformTransactionManager transactionManager;
     private final JdbcTemplate jdbcTemplate;
 
+    private String getJobParameter(String name, String defaultValue) {
+        List<JobParameter> params = jobParameterRepository.findJobParametersByJobId(PENALTY_JOB_ID);
+        for (JobParameter p : params) {
+            if (name.equals(p.getParameterName())) {
+                return p.getParameterValue();
+            }
+        }
+        return defaultValue;
+    }
+
     @Override
     public RepeatStatus execute(StepContribution contribution, ChunkContext chunkContext) throws Exception {
+        final boolean autoChargeOffEnabled = Boolean.parseBoolean(getJobParameter("auto-chargeoff-enabled", "false"));
+        final long autoChargeOffOverdueDays = Long.parseLong(getJobParameter("auto-chargeoff-overdue-days", "180"));
+        final boolean linearPenaltyEnabled = Boolean.parseBoolean(getJobParameter("linear-penalty-enabled", "false"));
+
         final Long penaltyWaitPeriodValue = configurationDomainService.retrievePenaltyWaitPeriod();
         final Boolean backdatePenalties = configurationDomainService.isBackdatePenaltiesEnabled();
         final Collection<OverdueLoanScheduleData> overdueLoanScheduledInstallments = loanReadPlatformService
@@ -105,12 +122,12 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
                     }
 
                     // Check if loan qualifies for auto charge-off
-                    if (autoChargeOffEnabled && autoChargeOffOverdueDays > 0 && shouldChargeOff(entry.getValue())) {
+                    if (autoChargeOffEnabled && autoChargeOffOverdueDays > 0 && shouldChargeOff(entry.getValue(), autoChargeOffOverdueDays)) {
                         // Try JPA charge-off in its own transaction
                         boolean chargedOff = false;
                         try {
                             txTemplate.executeWithoutResult(status -> {
-                                chargeOffLoanViaService(entry.getKey());
+                                chargeOffLoanViaService(entry.getKey(), autoChargeOffOverdueDays);
                             });
                             chargedOff = true;
                         } catch (Exception e) {
@@ -119,7 +136,7 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
                             // Try SQL fallback in a separate clean transaction
                             try {
                                 txTemplate.executeWithoutResult(status -> {
-                                    doFallbackChargeOffViaSql(entry.getKey());
+                                    doFallbackChargeOffViaSql(entry.getKey(), autoChargeOffOverdueDays);
                                 });
                                 chargedOff = true;
                             } catch (Exception e2) {
@@ -133,8 +150,10 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
                     }
 
                     // Apply penalty charges in its own transaction
+                    final Collection<OverdueLoanScheduleData> installmentsToCharge = linearPenaltyEnabled
+                            ? findEarliestPerCharge(entry.getValue()) : entry.getValue();
                     txTemplate.executeWithoutResult(status -> {
-                        loanChargeWritePlatformService.applyOverdueChargesForLoan(entry.getKey(), entry.getValue());
+                        loanChargeWritePlatformService.applyOverdueChargesForLoan(entry.getKey(), installmentsToCharge);
                     });
                 } catch (final PlatformApiDataValidationException e) {
                     final List<ApiParameterError> errors = e.getErrors();
@@ -165,7 +184,7 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
         return Boolean.TRUE.equals(chargedOff);
     }
 
-    private boolean shouldChargeOff(Collection<OverdueLoanScheduleData> overdueInstallments) {
+    private boolean shouldChargeOff(Collection<OverdueLoanScheduleData> overdueInstallments, long autoChargeOffOverdueDays) {
         final LocalDate businessDate = DateUtils.getBusinessLocalDate();
         final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
         LocalDate earliestDueDate = null;
@@ -182,6 +201,25 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
         return overdueDays >= autoChargeOffOverdueDays;
     }
 
+    private Collection<OverdueLoanScheduleData> findEarliestPerCharge(Collection<OverdueLoanScheduleData> installments) {
+        final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        final Map<Long, OverdueLoanScheduleData> earliestByCharge = new HashMap<>();
+        for (OverdueLoanScheduleData installment : installments) {
+            Long chargeId = installment.getChargeId();
+            OverdueLoanScheduleData current = earliestByCharge.get(chargeId);
+            if (current == null) {
+                earliestByCharge.put(chargeId, installment);
+            } else {
+                LocalDate currentDue = LocalDate.parse(current.getDueDate(), formatter);
+                LocalDate candidateDue = LocalDate.parse(installment.getDueDate(), formatter);
+                if (candidateDue.isBefore(currentDue)) {
+                    earliestByCharge.put(chargeId, installment);
+                }
+            }
+        }
+        return earliestByCharge.values();
+    }
+
     private Long getChargeOffReasonId() {
         List<CodeValueData> chargeOffReasons = codeValueReadPlatformService
                 .retrieveCodeValuesByCode(LoanApiConstants.CHARGE_OFF_REASONS);
@@ -191,7 +229,7 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
         return chargeOffReasons.stream().filter(CodeValueData::isActive).findFirst().map(CodeValueData::getId).orElse(null);
     }
 
-    private void chargeOffLoanViaService(Long loanId) {
+    private void chargeOffLoanViaService(Long loanId, long autoChargeOffOverdueDays) {
         Long reasonId = getChargeOffReasonId();
         if (reasonId == null) {
             throw new RuntimeException("No active charge-off reason found");
@@ -212,7 +250,7 @@ public class ApplyChargeToOverdueLoanInstallmentTasklet implements Tasklet {
         log.info("Auto charged-off loan {} (overdue >= {} days)", loanId, autoChargeOffOverdueDays);
     }
 
-    private void doFallbackChargeOffViaSql(Long loanId) {
+    private void doFallbackChargeOffViaSql(Long loanId, long autoChargeOffOverdueDays) {
         Long reasonId = getChargeOffReasonId();
         if (reasonId == null) {
             throw new RuntimeException("No active charge-off reason found");

@@ -32,6 +32,7 @@ import java.util.Collections;
 import org.apache.fineract.infrastructure.codes.service.CodeValueReadPlatformService;
 import org.apache.fineract.infrastructure.configuration.domain.ConfigurationDomainService;
 import org.apache.fineract.infrastructure.core.serialization.FromJsonHelper;
+import org.apache.fineract.infrastructure.jobs.domain.JobParameterRepository;
 import org.apache.fineract.portfolio.loanaccount.loanschedule.data.OverdueLoanScheduleData;
 import org.apache.fineract.portfolio.loanaccount.service.LoanChargeWritePlatformService;
 import org.apache.fineract.portfolio.loanaccount.service.LoanReadPlatformService;
@@ -66,10 +67,12 @@ public class ApplyChargeToOverdueLoanInstallmentTaskletTest {
 
         PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        JobParameterRepository jobParameterRepository = mock(JobParameterRepository.class);
+        when(jobParameterRepository.findJobParametersByJobId(anyLong())).thenReturn(Collections.emptyList());
 
         tasklet = new ApplyChargeToOverdueLoanInstallmentTasklet(configurationDomainService, loanReadPlatformService,
-                loanChargeWritePlatformService, loanWritePlatformService, codeValueReadPlatformService, fromJsonHelper, true, 180L,
-                transactionManager, jdbcTemplate);
+                loanChargeWritePlatformService, loanWritePlatformService, codeValueReadPlatformService, fromJsonHelper,
+                jobParameterRepository, transactionManager, jdbcTemplate);
     }
 
     @Test

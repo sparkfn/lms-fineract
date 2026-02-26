@@ -21,6 +21,7 @@ package org.apache.fineract.portfolio.loanaccount.jobs.applychargetooverdueloani
 import org.apache.fineract.infrastructure.codes.service.CodeValueReadPlatformService;
 import org.apache.fineract.infrastructure.configuration.domain.ConfigurationDomainService;
 import org.apache.fineract.infrastructure.core.serialization.FromJsonHelper;
+import org.apache.fineract.infrastructure.jobs.domain.JobParameterRepository;
 import org.apache.fineract.infrastructure.jobs.service.JobName;
 import org.apache.fineract.portfolio.loanaccount.service.LoanChargeWritePlatformService;
 import org.apache.fineract.portfolio.loanaccount.service.LoanReadPlatformService;
@@ -33,7 +34,6 @@ import org.springframework.batch.core.launch.support.RunIdIncrementer;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -59,12 +59,8 @@ public class ApplyChargeToOverdueLoanInstallmentConfig {
     private FromJsonHelper fromJsonHelper;
     @Autowired
     private JdbcTemplate jdbcTemplate;
-
-    @Value("${FINERACT_AUTO_CHARGEOFF_ENABLED:false}")
-    private boolean autoChargeOffEnabled;
-
-    @Value("${FINERACT_AUTO_CHARGEOFF_OVERDUE_DAYS:180}")
-    private long autoChargeOffOverdueDays;
+    @Autowired
+    private JobParameterRepository jobParameterRepository;
 
     @Bean
     protected Step applyChargeToOverdueLoanInstallmentStep() {
@@ -82,6 +78,6 @@ public class ApplyChargeToOverdueLoanInstallmentConfig {
     public ApplyChargeToOverdueLoanInstallmentTasklet applyChargeToOverdueLoanInstallmentTasklet() {
         return new ApplyChargeToOverdueLoanInstallmentTasklet(configurationDomainService, loanReadPlatformService,
                 loanChargeWritePlatformService, loanWritePlatformService, codeValueReadPlatformService, fromJsonHelper,
-                autoChargeOffEnabled, autoChargeOffOverdueDays, transactionManager, jdbcTemplate);
+                jobParameterRepository, transactionManager, jdbcTemplate);
     }
 }
