@@ -29,15 +29,19 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Collections;
+import org.apache.fineract.infrastructure.codes.service.CodeValueReadPlatformService;
 import org.apache.fineract.infrastructure.configuration.domain.ConfigurationDomainService;
+import org.apache.fineract.infrastructure.core.serialization.FromJsonHelper;
 import org.apache.fineract.portfolio.loanaccount.loanschedule.data.OverdueLoanScheduleData;
 import org.apache.fineract.portfolio.loanaccount.service.LoanChargeWritePlatformService;
 import org.apache.fineract.portfolio.loanaccount.service.LoanReadPlatformService;
+import org.apache.fineract.portfolio.loanaccount.service.LoanWritePlatformService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.StepContribution;
 import org.springframework.batch.core.scope.context.ChunkContext;
 import org.springframework.batch.repeat.RepeatStatus;
+import org.springframework.transaction.PlatformTransactionManager;
 
 public class ApplyChargeToOverdueLoanInstallmentTaskletTest {
 
@@ -55,8 +59,15 @@ public class ApplyChargeToOverdueLoanInstallmentTaskletTest {
         contribution = mock(StepContribution.class);
         chunkContext = mock(ChunkContext.class);
 
+        LoanWritePlatformService loanWritePlatformService = mock(LoanWritePlatformService.class);
+        CodeValueReadPlatformService codeValueReadPlatformService = mock(CodeValueReadPlatformService.class);
+        FromJsonHelper fromJsonHelper = mock(FromJsonHelper.class);
+
+        PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
+
         tasklet = new ApplyChargeToOverdueLoanInstallmentTasklet(configurationDomainService, loanReadPlatformService,
-                loanChargeWritePlatformService);
+                loanChargeWritePlatformService, loanWritePlatformService, codeValueReadPlatformService, fromJsonHelper, 180L,
+                transactionManager);
     }
 
     @Test

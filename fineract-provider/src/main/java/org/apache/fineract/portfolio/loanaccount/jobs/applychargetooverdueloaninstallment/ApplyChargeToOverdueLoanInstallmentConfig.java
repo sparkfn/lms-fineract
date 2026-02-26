@@ -18,10 +18,13 @@
  */
 package org.apache.fineract.portfolio.loanaccount.jobs.applychargetooverdueloaninstallment;
 
+import org.apache.fineract.infrastructure.codes.service.CodeValueReadPlatformService;
 import org.apache.fineract.infrastructure.configuration.domain.ConfigurationDomainService;
+import org.apache.fineract.infrastructure.core.serialization.FromJsonHelper;
 import org.apache.fineract.infrastructure.jobs.service.JobName;
 import org.apache.fineract.portfolio.loanaccount.service.LoanChargeWritePlatformService;
 import org.apache.fineract.portfolio.loanaccount.service.LoanReadPlatformService;
+import org.apache.fineract.portfolio.loanaccount.service.LoanWritePlatformService;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.job.builder.JobBuilder;
@@ -29,6 +32,7 @@ import org.springframework.batch.core.launch.support.RunIdIncrementer;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -46,6 +50,15 @@ public class ApplyChargeToOverdueLoanInstallmentConfig {
     private LoanReadPlatformService loanReadPlatformService;
     @Autowired
     private LoanChargeWritePlatformService loanChargeWritePlatformService;
+    @Autowired
+    private LoanWritePlatformService loanWritePlatformService;
+    @Autowired
+    private CodeValueReadPlatformService codeValueReadPlatformService;
+    @Autowired
+    private FromJsonHelper fromJsonHelper;
+
+    @Value("${FINERACT_AUTO_CHARGEOFF_OVERDUE_DAYS:180}")
+    private long autoChargeOffOverdueDays;
 
     @Bean
     protected Step applyChargeToOverdueLoanInstallmentStep() {
@@ -62,6 +75,7 @@ public class ApplyChargeToOverdueLoanInstallmentConfig {
     @Bean
     public ApplyChargeToOverdueLoanInstallmentTasklet applyChargeToOverdueLoanInstallmentTasklet() {
         return new ApplyChargeToOverdueLoanInstallmentTasklet(configurationDomainService, loanReadPlatformService,
-                loanChargeWritePlatformService);
+                loanChargeWritePlatformService, loanWritePlatformService, codeValueReadPlatformService, fromJsonHelper,
+                autoChargeOffOverdueDays, transactionManager);
     }
 }
